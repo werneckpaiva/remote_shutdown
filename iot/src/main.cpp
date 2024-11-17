@@ -3,16 +3,18 @@
 #include <ESPmDNS.h>
 #include "wifi_config.h"
 #include "local_wifi.h"
+#include <WiFiUdp.h>
+#include <WakeOnLan.h>
 
 #define DEBUG_FAUXMO
 #include <fauxmoESP.h>
 
-#include <TFT_eSPI.h>
+
 
 #include "OneButton.h"
 
-const byte LCD_POWER_ON_PIN = 15;
-const byte LCD_BACKLIGHT_PIN = 38;
+#include "Display.h"
+
 
 const byte BTN_RIGHT_PIN = 0;
 const byte BTN_LEFT_PIN = 14;
@@ -21,52 +23,16 @@ const byte PIN_BAT_VOLT = 4;
 const byte PIN_TOUCH_INT = 16;
 const byte PIN_TOUCH_RES = 21;
 
+Display* display = NULL;
+
 
 String SERVER_BASE_URL = "http://hawking.local:8090";
-const char* SERVER_NAME = "home-control";
+const char* ALEXA_DEVICE_NAME = "computer";
+const char *ServerMACAddress = "70:4d:7b:61:d2:5c";
 
-TFT_eSPI* display;
+WiFiUDP UDP;
+WakeOnLan WOL(UDP);
 
-void initDisplay(){
-    pinMode(LCD_BACKLIGHT_PIN, OUTPUT);
-    pinMode(LCD_POWER_ON_PIN, OUTPUT);
-
-    display = new TFT_eSPI();
-    
-    digitalWrite(LCD_POWER_ON_PIN, HIGH);
-    display->init();
-    display->setRotation(0);
-    display->fillScreen(TFT_BLACK);
-    digitalWrite(LCD_BACKLIGHT_PIN, LOW);
-}
-
-
-TaskHandle_t displayTimerHandle = NULL;
-void timedDisplay(String msg){
-    digitalWrite(LCD_BACKLIGHT_PIN, HIGH);
-    display->fillScreen(TFT_BLUE);
-    display->setTextColor(TFT_WHITE, TFT_BLUE); 
-    display->drawCentreString(msg, 80, 14, 2);
-
-    if (displayTimerHandle != NULL){
-        vTaskDelete(displayTimerHandle);
-        displayTimerHandle = NULL;
-    }
-
-    xTaskCreate([](void* parameter) {
-            for(;;){
-                vTaskDelay(10000 / portTICK_PERIOD_MS);
-                digitalWrite(LCD_BACKLIGHT_PIN, LOW);
-            }
-            vTaskDelete(NULL); 
-        },
-        "display_timer",
-        (5 * 1024),
-        NULL,
-        1,
-        &displayTimerHandle);
-
-}
 
 typedef struct {
     bool serverIsOn = false;
@@ -105,20 +71,23 @@ String getApiURL(const String &action, const uint64_t token){
 
 ServerStatus callServerApi(const char* action) {
     String url = getApiURL(action, getCurrentToken());
+    Serial.print("URL: ");
     Serial.println(url);
 
     HTTPClient http;
     http.setTimeout(2000);
     http.begin(url);
     int httpResponseCode = http.GET();
+
     String response = http.getString();
+    Serial.print("Code: ");
     Serial.println(httpResponseCode);
+    Serial.print("Response: ");
     Serial.println(response);
     http.end();
     ServerStatus serverStatus;
     serverStatus.serverIsOn = (httpResponseCode == 200);
     if (serverStatus.serverIsOn) {
-        timedDisplay(response);
         serverStatus.shutdownIsRunning = response.indexOf("SCHEDULED") != -1;
     } else {
         serverStatus.shutdownIsRunning = false;
@@ -139,6 +108,7 @@ ServerStatus cancelShutdownServer() {
     return callServerApi("cancel");
 }
 
+
 fauxmoESP *alexa;
 
 void handleAlexaAction(unsigned char device_id, const char * device_name, bool turnServerOn, unsigned char brightness, byte * rgb) {
@@ -146,7 +116,10 @@ void handleAlexaAction(unsigned char device_id, const char * device_name, bool t
     Serial.println(turnServerOn);
     ServerStatus serverStatus = getServerStatus();
     if (!serverStatus.serverIsOn){
-        alexa->setState(SERVER_NAME, false, 0);
+        if (turnServerOn){
+            display->println("Wake on LAN");
+            WOL.sendMagicPacket(ServerMACAddress);
+        }
     } else {
         if (turnServerOn){
             if (serverStatus.shutdownIsRunning){
@@ -158,12 +131,18 @@ void handleAlexaAction(unsigned char device_id, const char * device_name, bool t
     }
 }
 
+void updateStatus(){
+    ServerStatus serverStatus = getServerStatus();
+    alexa->setState(ALEXA_DEVICE_NAME, serverStatus.serverIsOn, serverStatus.serverIsOn?100:0);
+    display->getTFT()->setTextColor(TFT_WHITE, TFT_RED);
+    display->getTFT()->setTextDatum(MC_DATUM); 
+    display->getTFT()->drawCentreString(serverStatus.serverIsOn ? "Server is on" : "Server is off", display->getTFT()->width()/2, 0, 1);
+}
+
 void initAlexa(){
     alexa = new fauxmoESP();
 
-    alexa->addDevice(SERVER_NAME);
-    ServerStatus serverStatus = getServerStatus();
-    alexa->setState(SERVER_NAME, serverStatus.serverIsOn, serverStatus.serverIsOn?100:0);
+    alexa->addDevice(ALEXA_DEVICE_NAME);
 
     alexa->setPort(80); // required for gen3 devices
     alexa->enable(true);
@@ -178,10 +157,12 @@ void initAlexa(){
             }
         },
         "alexa_loop",
-        (5 * 1024),
+        (10 * 1024),
         NULL,
         1,
         NULL);
+
+    updateStatus();
 }
 
 
@@ -198,13 +179,11 @@ OneButton* btnLeft;
 OneButton* btnRight;
 
 void btnLeftOnClick() {
-    Serial.println("btnLeftOnClick");
-    timedDisplay("Left Clicked");
 }
 
 void btnRightOnClick() {
     Serial.println("btnRightClick");
-    timedDisplay("Right Clicked");
+    display->wakeDisplay();
 }
 
 void initButtons(){
@@ -226,15 +205,41 @@ void initButtons(){
         NULL);
 }
 
+void initWakeOnLan(){
+    WOL.setRepeat(3, 100); // Repeat the packet three times with 100ms between. delay() is used between send packet function.
+    Serial.print("Mask: ");
+    Serial.println(WiFi.subnetMask());
+    WOL.calculateBroadcastAddress(WiFi.localIP(), WiFi.subnetMask()); 
+}
+
+
+
+void initStatus(){
+    xTaskCreate([](void* parameter) {
+            for(;;){
+                updateStatus();
+                vTaskDelay(10000 / portTICK_PERIOD_MS);
+            }
+        },
+        "monitoring_state",
+        (5 * 1024),
+        NULL,
+        1,
+        NULL);
+}
+
+
 
 void setup() {
     Serial.begin(115200);
-    initDisplay();
+    display = new Display();
     connectToWifi();
-    MDNS.begin("home-control");
     initTime();
+    initWakeOnLan();
+    MDNS.begin("home-control");
     initAlexa();
     initButtons();
+    initStatus();
 
 }
 
