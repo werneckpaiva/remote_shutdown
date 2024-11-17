@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 
 import settings
+import logging
 
+logger = logging.getLogger(__name__)
 
 def lcg_random(seed:int, salt:int, size:int) -> int:
     a=1664525
@@ -10,7 +12,7 @@ def lcg_random(seed:int, salt:int, size:int) -> int:
     max_number = 10 ** size
     for i in range(salt):
         current = (a * current + c) % max_number
-    return current
+    return current % max_number
 
 def get_current_minute_timestamp()->int:
     return int(datetime.now(timezone.utc).timestamp() // 60)
@@ -34,7 +36,7 @@ def authenticate(token:str)->bool:
 
     for delta in minutes:
         expected_token = generate_current_token(current_minute_ts + delta)
-        print("Expected: ", expected_token, " Provided: ", token)
+        logger.debug(f"Token expected: {expected_token}, provided: {token}")
         if token == expected_token:
             return True
 
