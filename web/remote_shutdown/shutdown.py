@@ -125,7 +125,7 @@ def shutdown(minutes: int) -> ShutdownStatus:
 def suspend(minutes: int) -> ShutdownStatus:
     cancel()
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    suspend_cmd = os.path.join(current_dir, "bin", "suspend.sh")
+    suspend_cmd = os.path.join(current_dir, "..", "bin", "suspend.sh")
     result = subprocess.run(['at', '-f', suspend_cmd, f'now + {minutes} minutes'], capture_output=True, text=True)
     result.check_returncode()
     return get_suspend_status()
