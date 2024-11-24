@@ -32,6 +32,7 @@ class ShutdownStatus:
             status_dict['mode'] = self.mode
         if self.scheduled_time:
             status_dict['time'] = self.scheduled_time.strftime('%Y-%m-%d %H:%M:%S')
+            status_dict['timestamp'] = int(self.scheduled_time.timestamp())
         if self.message:
             status_dict['message'] = self.message
         return status_dict
