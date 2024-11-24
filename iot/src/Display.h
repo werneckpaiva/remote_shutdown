@@ -19,7 +19,7 @@ class Display {
         void wakeDisplay();
         TFT_eSPI* getTFT();
 
-        void println(const char c[]);
+        void printTopHeader(const char c[], int bgColor);
 };
 
 Display::Display(){
@@ -34,7 +34,6 @@ Display::Display(){
     display->fillScreen(TFT_BLACK);
     display->setTextColor(TFT_WHITE, TFT_BLUE);
     display->setTextWrap(true);
-    display->setTextSize(2);
     digitalWrite(LCD_BACKLIGHT_PIN, LOW);
 }
 
@@ -66,10 +65,12 @@ void Display::wakeDisplay(){
         &displayTimerHandle);
 }
 
-void Display::println(const char c[]) {
-    display->setTextColor(TFT_WHITE, TFT_BLUE);
-    display->println(c);
-    this->wakeDisplay();
+void Display::printTopHeader(const char c[], int bgColor) {
+    display->fillRect(0, 0, display->width(), 50, bgColor);
+    display->setTextColor(TFT_WHITE, bgColor);
+    display->setFreeFont(&FreeSans9pt7b);
+    display->setTextDatum(MC_DATUM);
+    display->drawString(c, display->width()/2, 50 / 2);
 }
 
 
